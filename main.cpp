@@ -4,5 +4,6 @@
 
 int main(int argc, char** argv)
 {
+    OsqpEigen::Solver solver;
     return 0;
 }
