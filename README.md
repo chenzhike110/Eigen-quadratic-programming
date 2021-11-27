@@ -34,3 +34,7 @@ Upper and lower bound are equal to
 
 ### OSQP
 
+- run time	1.21e-04 s
+
+  
+
