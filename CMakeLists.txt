@@ -10,7 +10,11 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-add_executable(Eigen_Quadratic main.cpp)
+file(GLOB SRC 
+  ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
+)
+
+add_executable(Eigen_Quadratic ${SRC})
 target_link_libraries(Eigen_Quadratic 
     OsqpEigen::OsqpEigen
     ${EIGEN_LIBRARIES}
