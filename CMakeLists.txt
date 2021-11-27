@@ -11,7 +11,8 @@ include_directories(
 )
 
 file(GLOB SRC 
-  ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/locomotion/*.cpp
 )
 
 add_executable(Eigen_Quadratic ${SRC})

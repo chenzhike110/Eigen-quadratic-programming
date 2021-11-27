@@ -106,7 +106,7 @@ void LMPC_QP::setInputBound(Eigen::VectorXd& ulowbound, Eigen::VectorXd uupbound
 void LMPC_QP::updateHessianAndGradient()
 {
     Eigen::MatrixXd hessianDense;
-    int variableNum = dim_x * (windowsize + 1) + dim_u * windowsize;
+    constexpr int variableNum = dim_x * (windowsize + 1) + dim_u * windowsize;
     hessianDense.resize(variableNum, variableNum);
     gradient_.resize(variableNum, 1);
     hessianDense.setZero();
@@ -115,8 +115,8 @@ void LMPC_QP::updateHessianAndGradient()
     hessianDense.block<dim_x, dim_x>(0, 0) = Q_;
     gradient_.block<dim_x, 1>(0, 0) = -Q_ * xref_.block<1, x_dim>(0, 0).transpose();
     for(int i = 1; i <= windowsize; i++) {
-        hessian.block<dim_x, dim_x>(dim_x * i, dim_x * i) = Q;
-        hessian.block<dim_u, dim_u>(dim_x * (windowsize + 1) + i - 1, dim_x * (windowsize + 1) + i - 1) = R_;
+        hessianDense.block<dim_x, dim_x>(dim_x * i, dim_x * i) = Q;
+        hessianDense.block<dim_u, dim_u>(dim_x * (windowsize + 1) + i - 1, dim_x * (windowsize + 1) + i - 1) = R_;
         gradient_.block<dim_x, 1>(dim_x * i , 0) = -Q * xref_.block<dim_x, 1>(i, 0).transpose();
     }
     hessian_ = hessianDense.sparseView();
@@ -125,7 +125,7 @@ void LMPC_QP::updateHessianAndGradient()
 void LMPC_QP::updateConstraintAndBound()
 {
     Eigen::MatrixXd constraintDense;
-    int variableNum = dim_x * (windowsize + 1) + dim_u * windowsize;
+    constexpr int variableNum = dim_x * (windowsize + 1) + dim_u * windowsize;
     
     constraintDense.resize(variableNum + dim_x * (windowsize + 1), variableNum);
     lowerBound_.resize(variableNum, 1);
@@ -140,12 +140,12 @@ void LMPC_QP::updateConstraintAndBound()
     constaints.block<variableNum, variableNum>(dim_x * (windowsize + 1), 0) = Eigen::Matrix<double, variableNum, variableNum>::Identity();
 
     for(int i = 1; i <= windowsize; i++) {
-        lowerBound
+        // lowerBound
     }
 
 }
 
 void LMPC_QP::solve()
 {
-    
+
 }
