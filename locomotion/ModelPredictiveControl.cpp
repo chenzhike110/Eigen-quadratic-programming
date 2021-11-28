@@ -172,7 +172,7 @@ void ModelPredictiveControl::updateConstraint()
 {
     Eigen::MatrixXd constraintDense;
     constexpr int variableNum = STATE_SIZE * (NB_STEPS + 1) + INPUT_SIZE * NB_STEPS;
-    constexpr int constraintNum = STATE_SIZE * (NB_STEPS + 1);
+    constexpr int constraintNum = STATE_SIZE * (NB_STEPS + 1) + NB_STEPS * 2;
     constraintDense.resize(constraintNum, variableNum);
     lowerBound_.resize(constraintNum, 1);
     upperBound_.resize(constraintNum, 1);
@@ -200,7 +200,25 @@ void ModelPredictiveControl::updateConstraint()
 
 void ModelPredictiveControl::updateBound()
 {
-
+    int initNum = STATE_SIZE * (NB_STEPS + 1);
+    Eigen::VectorXd initLow, initUp, nextLow, nextUp, targetLow, targetUp;
+    Eigen::MatrixXd initConstraint, nextConstraint, targetConstraint;
+    for(int i = 1; i <= NB_STEPS; i++)
+    {
+        if( indexToHrep_[i] <= 1) {
+            long j = i - nbInitSupportSteps_;
+            double x = (nbDoubleSupportSteps_ > 0) ? static_cast<double>(j) / static_cast<double>(nbDoubleSupportSteps_) : 0;
+            x = clamp(x, 0., 1.);
+            zmpRef_.segment<2>(2 * i) = (1. - x) * p_0 + x * p_1;
+        }
+        else {
+            long j = i - nbInitSupportSteps_ - nbDoubleSupportSteps_ - nbTargetSupportSteps_;
+            double x = (nbNextDoubleSupportSteps_ > 0) ? static_cast<double>(j) / static_cast<double>(nbNextDoubleSupportSteps_) : 0;
+            x = clamp(x, 0., 1.);
+            zmpRef_.segment<2>(2 * i) = (1. - x) * p_1 + x * p_2;
+        }
+        lowerBound_.segment<2>(i + initNum) = 
+    }
 }
 
 void ModelPredictiveControl::buildAndSolve()

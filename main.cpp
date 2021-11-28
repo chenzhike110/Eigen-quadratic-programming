@@ -135,7 +135,7 @@ void Locomotion()
 {
     ModelPredictiveControl mpc_;
     Contact init(sva::PTransformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero()));
-    init.halfWidth = 0.16;
+    init.halfWidth = 0.24;
     init.supportState_ = ContactState::DoubleSupport; 
     Contact middle(sva::PTransformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d(0, 0.2, 0)));
     Contact Target(sva::PTransformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d(0, -0.2, 0)));
