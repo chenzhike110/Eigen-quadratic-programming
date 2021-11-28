@@ -1,3 +1,4 @@
+#include <iomanip>
 #include <locomotion/ModelPredictiveControl.h>
 #include <locomotion/util.h>
 
@@ -36,16 +37,18 @@ ModelPredictiveControl::ModelPredictiveControl()
         0, 0,
         -zeta, 0,
         0, -zeta;
+    
     initState_ = Eigen::VectorXd::Zero(STATE_SIZE);
-    updateConstraint();
+    updateFixedConstraint();
     updateHessian();
 }
 
 void ModelPredictiveControl::phaseDurations(double initSupportDuration,
                                             double doubleSupportDuration,
-                                            double targetSupportDuration)
+                                            double targetSupportDuration,
+                                            double targetDoubleDuration)
 {
-    // initSupport -> doubleSupport -> targetSupport -> nextDoubleSupport
+    // initSupport -> doubleSupport -> targetSupport -> nextDoubleSupport 
     const double T = SAMPLING_PERIOD;
     unsigned nbStepSoFar = 0;
     nbInitSupportSteps_ = std::min(static_cast<unsigned>(std::round(initSupportDuration / T)), NB_STEPS - nbStepSoFar);
@@ -54,31 +57,25 @@ void ModelPredictiveControl::phaseDurations(double initSupportDuration,
     nbStepSoFar += nbDoubleSupportSteps_;
     nbTargetSupportSteps_ = std::min(static_cast<unsigned>(std::round(targetSupportDuration / T)), NB_STEPS - nbStepSoFar);
     nbStepSoFar += nbTargetSupportSteps_;
-
-    if(nbTargetSupportSteps_ > 0) {
-        nbNextDoubleSupportSteps_ = NB_STEPS - nbStepSoFar;
-    }
+    nbNextDoubleSupportSteps_ = std::min(static_cast<unsigned>(std::round(targetDoubleDuration / T)), NB_STEPS - nbStepSoFar);
+    nbStepSoFar += nbNextDoubleSupportSteps_;
+    nbFinalSupportSteps_ = NB_STEPS - nbStepSoFar;
 
     for (long i = 0; i <= NB_STEPS; i++) {
         if(i < nbInitSupportSteps_ || (i > 0 && i==nbInitSupportSteps_)) {
-            indexToHrep_[i] = 0;
+            indexToHrep_[i] = 0; // single support on first contact
         }
         else if(i - nbInitSupportSteps_ < nbDoubleSupportSteps_) {
-            indexToHrep_[i] = 1;
+            indexToHrep_[i] = 1; // double support between first contact and second contact
         }
-        else if(nbTargetSupportSteps_ > 0) {
-            if(i - nbInitSupportSteps_ - nbDoubleSupportSteps_ < nbTargetSupportSteps_){
-                indexToHrep_[i] = 2;
-            }
-            else if(nbNextDoubleSupportSteps_ > 0) {
-                indexToHrep_[i] = 3;
-            }
-            else {
-                indexToHrep_[i] = 2;
-            }
+        else if(i - nbInitSupportSteps_ - nbDoubleSupportSteps_ < nbTargetSupportSteps_){
+            indexToHrep_[i] = 2; // single support on second contact
+        }
+        else if(i - nbInitSupportSteps_ - nbDoubleSupportSteps_ - nbTargetSupportSteps_ < nbNextDoubleSupportSteps_) {
+            indexToHrep_[i] = 3; // double support between second and third contact
         }
         else {
-            indexToHrep_[i] = 1;
+            indexToHrep_[i] = 4;
         }
     }
 }
@@ -94,8 +91,8 @@ void ModelPredictiveControl::computeZMP_ref()
 {
     zmpRef_.setZero();
     Eigen::Vector2d p_0 = initContact_.position().head<2>();
-    Eigen::Vector2d p_1 = targetContact_.position().head<2>();
-    Eigen::Vector2d p_2 = nextContact_.position().head<2>();
+    Eigen::Vector2d p_2 = targetContact_.position().head<2>();
+    Eigen::Vector2d p_1 = nextContact_.position().head<2>();
 
     for(long i = 0; i <= NB_STEPS; i++) {
         if( indexToHrep_[i] <= 1) {
@@ -111,8 +108,6 @@ void ModelPredictiveControl::computeZMP_ref()
             zmpRef_.segment<2>(2 * i) = (1. - x) * p_1 + x * p_2;
         }
     }
-
-    std::cout << "zmpRef: \n" << zmpRef_ << std::endl;
 }
 
 void ModelPredictiveControl::updateEstimation(Eigen::VectorXd & xest)
@@ -129,9 +124,13 @@ void ModelPredictiveControl::updateHessian()
     Eigen::Matrix<double, STATE_SIZE, STATE_SIZE> Q;
     Eigen::Matrix<double, INPUT_SIZE, INPUT_SIZE> R;
     R.setIdentity();
+    // R.setZero();
     Eigen::Matrix2d zmpCost = Eigen::Matrix2d::Identity() * zmpWeight;
     Q = stateTozmp_ * zmpCost * stateTozmp_.transpose();
     R = R * jerkWeight;
+
+    // Q(2, 2) = velWeights[0];
+    // Q(3, 3) = velWeights[1];
 
     hessianDense.block<STATE_SIZE, STATE_SIZE>(0, 0) = Q;
     for(int i = 1; i <= NB_STEPS; i++)
@@ -142,7 +141,7 @@ void ModelPredictiveControl::updateHessian()
     hessian_ = hessianDense.sparseView();
 
     solver_.data()->setNumberOfVariables(variableNum);
-    std::cout << "hessian: \n" << hessian_ << std::endl;
+    // std::cout << "hessian: \n" << hessian_ << std::endl;
 
     if(!solver_.data()->setHessianMatrix(hessian_))
     {
@@ -165,12 +164,11 @@ void ModelPredictiveControl::updateGradient()
     {
         gradient_.segment<STATE_SIZE>(STATE_SIZE * i) = -Q_ * zmpRef_.segment<2>(2 * i);
     }
-    std::cout << "gradient: \n" << gradient_ << std::endl;
+    
 }
 
-void ModelPredictiveControl::updateConstraint()
+void ModelPredictiveControl::updateFixedConstraint()
 {
-    Eigen::MatrixXd constraintDense;
     constexpr int variableNum = STATE_SIZE * (NB_STEPS + 1) + INPUT_SIZE * NB_STEPS;
     constexpr int constraintNum = STATE_SIZE * (NB_STEPS + 1) + NB_STEPS * 2;
     constraintDense.resize(constraintNum, variableNum);
@@ -190,34 +188,46 @@ void ModelPredictiveControl::updateConstraint()
         constraintDense.block<STATE_SIZE, INPUT_SIZE>(STATE_SIZE * i, STATE_SIZE * (NB_STEPS + 1) + INPUT_SIZE*(i - 1)) = B_;
     }
 
-    constraint_ = constraintDense.sparseView();
-
     solver_.data()->setNumberOfConstraints(constraintNum);
-    std::cout << "constaints: \n" << constraint_ << std::endl;
-    std::cout << "uppercontaint: \n" << upperBound_ << std::endl;
-    std::cout << "lowercontaint: \n" << lowerBound_ << std::endl;
 }
 
 void ModelPredictiveControl::updateBound()
 {
-    int initNum = STATE_SIZE * (NB_STEPS + 1);
+    int constraintIndex = STATE_SIZE * (NB_STEPS + 1);
     Eigen::VectorXd initLow, initUp, nextLow, nextUp, targetLow, targetUp;
     Eigen::MatrixXd initConstraint, nextConstraint, targetConstraint;
+    initContact_.getConstraint(initConstraint, initLow, initUp);
+    nextContact_.getConstraint(nextConstraint, nextLow, nextUp);
+    targetContact_.getConstraint(targetConstraint, targetLow, targetUp);
+
+    constraintDense.block<NB_STEPS * 2, STATE_SIZE * (NB_STEPS + 1) + INPUT_SIZE * NB_STEPS>(constraintIndex, 0).setZero();
+    lowerBound_.segment<NB_STEPS * 2>(constraintIndex).setZero();
+    upperBound_.segment<NB_STEPS * 2>(constraintIndex).setZero();
+
+    initConstraint = initConstraint * stateTozmp_.transpose();
+    nextConstraint = nextConstraint * stateTozmp_.transpose();
+    targetConstraint = targetConstraint * stateTozmp_.transpose();
+
     for(int i = 1; i <= NB_STEPS; i++)
     {
-        if( indexToHrep_[i] <= 1) {
-            long j = i - nbInitSupportSteps_;
-            double x = (nbDoubleSupportSteps_ > 0) ? static_cast<double>(j) / static_cast<double>(nbDoubleSupportSteps_) : 0;
-            x = clamp(x, 0., 1.);
-            zmpRef_.segment<2>(2 * i) = (1. - x) * p_0 + x * p_1;
+        if( indexToHrep_[i] == 0) {
+            constraintDense.block<2, STATE_SIZE>(constraintIndex, STATE_SIZE * i) = initConstraint;
+            lowerBound_.segment<2>(constraintIndex) = initLow;
+            upperBound_.segment<2>(constraintIndex) = initUp;
+            constraintIndex += 2;
         }
-        else {
-            long j = i - nbInitSupportSteps_ - nbDoubleSupportSteps_ - nbTargetSupportSteps_;
-            double x = (nbNextDoubleSupportSteps_ > 0) ? static_cast<double>(j) / static_cast<double>(nbNextDoubleSupportSteps_) : 0;
-            x = clamp(x, 0., 1.);
-            zmpRef_.segment<2>(2 * i) = (1. - x) * p_1 + x * p_2;
+        if( indexToHrep_[i] == 2) {
+            constraintDense.block<2, STATE_SIZE>(constraintIndex, STATE_SIZE * i) = nextConstraint;
+            lowerBound_.segment<2>(constraintIndex) = nextLow;
+            upperBound_.segment<2>(constraintIndex) = nextUp;
+            constraintIndex += 2;
         }
-        lowerBound_.segment<2>(i + initNum) = 
+        if( indexToHrep_[i] == 4) {
+            constraintDense.block<2, STATE_SIZE>(constraintIndex, STATE_SIZE * i) = targetConstraint;
+            lowerBound_.segment<2>(constraintIndex) = targetLow;
+            upperBound_.segment<2>(constraintIndex) = targetUp;
+            constraintIndex += 2;
+        }
     }
 }
 
@@ -226,6 +236,8 @@ void ModelPredictiveControl::buildAndSolve()
     computeZMP_ref();
     updateGradient();
     updateBound();
+
+    constraint_ = constraintDense.sparseView();
     
     if(!solver_.data()->setGradient(gradient_))
     {
@@ -253,9 +265,36 @@ void ModelPredictiveControl::buildAndSolve()
         std::cout << "solver solve error" << std::endl;
     }
 
+    // std::cout << "gradient: \n" << gradient_ << std::endl;
+    // std::cout << "constaints: \n" << constraint_ << std::endl;
+    // std::cout << "uppercontaint: \n" << upperBound_ << std::endl;
+    // std::cout << "lowercontaint: \n" << lowerBound_ << std::endl;
+
     Eigen::VectorXd QPSolution = solver_.getSolution();
     Eigen::Map<Eigen::MatrixXd> states(QPSolution.block<STATE_SIZE * (NB_STEPS + 1), 1>(0, 0).data(), STATE_SIZE, NB_STEPS + 1);
     std::cout << "preview states: \n" << states.transpose() << std::endl;
+    Eigen::MatrixXd statePlan = states;
+    calibrate(statePlan);
+}
+
+void ModelPredictiveControl::calibrate(Eigen::MatrixXd states)
+{
+    Eigen::Matrix<double, 2, 1> zmp;
+    for(int i = 0; i < states.cols(); i++)
+    {
+        zmp = stateTozmp_.transpose() * states.col(i);
+        std::cout << zmp.transpose() << " | ";
+        std::cout << zmpRef_.segment<2>(i * 2).transpose() << std::endl; 
+        if(indexToHrep_[i] == 0) {
+            std::cout << "zmp in rectangle: " << initContact_.containPoint(zmp) << std::endl;
+        }
+        else if(indexToHrep_[i] == 2) {
+            std::cout << "zmp in rectangle: " << nextContact_.containPoint(zmp) << std::endl;
+        }
+        else if(indexToHrep_[i] == 4) {
+            std::cout << "zmp in rectangle: " << targetContact_.containPoint(zmp) << std::endl;
+        }
+    }
 }
 
 }

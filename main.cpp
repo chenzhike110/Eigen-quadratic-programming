@@ -133,16 +133,15 @@ bool SimpleSystem()
 
 void Locomotion()
 {
-    ModelPredictiveControl mpc_;
     Contact init(sva::PTransformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero()));
     init.halfWidth = 0.24;
     init.supportState_ = ContactState::DoubleSupport; 
     Contact middle(sva::PTransformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d(0, 0.2, 0)));
     Contact Target(sva::PTransformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d(0, -0.2, 0)));
+    ModelPredictiveControl mpc_;
     mpc_.updateContact(init, middle, Target);
-    mpc_.phaseDurations(0, 0.4, 0.8);
+    mpc_.phaseDurations(0, 0.4, 0.8, 0.4);
     mpc_.buildAndSolve();
-    
 }
 
 int main(int argc, char** argv)
