@@ -136,8 +136,8 @@ void Locomotion()
     Contact init(sva::PTransformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero()));
     init.supportState_ = ContactState::DoubleSupport; 
     init.remainSupportTime_ = DoubleSupportTime;
-    Contact middle(sva::PTransformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d(0, 0.2, 0)));
-    Contact Target(sva::PTransformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d(0, -0.2, 0)));
+    Contact middle(sva::PTransformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d(0, 0.15, 0)));
+    Contact Target(sva::PTransformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d(0, -0.15, 0)));
 
     Contact end = init;
     end.remainSupportTime_ = 100;
@@ -146,7 +146,7 @@ void Locomotion()
     ModelPredictiveControl mpc_;
     mpc_.addContactSequence<std::vector<Contact>>(targetPlan);
     // mpc_.phaseDurations(0, 0.4, 0.8, 0.4);
-    for (long i = 0; i < 50; i++) {
+    for (long i = 0; i < 200; i++) {
         mpc_.buildAndSolve();
         Eigen::VectorXd nextState = mpc_.stateTraj_.col(1);
         mpc_.updateEstimation(nextState);

@@ -11,7 +11,7 @@ enum class ContactState
 };
 
 constexpr int DoubleSupportTime = 20;
-constexpr int SingleSupportTime = 50;
+constexpr int SingleSupportTime = 30;
 
 struct Contact
 {

@@ -48,7 +48,7 @@ ModelPredictiveControl::ModelPredictiveControl()
     footPlan_.push_back(init);
 
     solver_.settings()->setWarmStart(true);
-    // solver_.settings()->setVerbosity(false);
+    solver_.settings()->setVerbosity(false);
 
     if(!solver_.initSolver())
     {
@@ -110,12 +110,13 @@ void ModelPredictiveControl::generateplan()
     nbFinalSupportSteps_ = footPlan_[tmpIndex].supportState_ == ContactState::SingleSupport ? footPlan_[tmpIndex++].remainSupportTime_ : 0;
     totalForward += nbFinalSupportSteps_;
 
-    totalIndex.resize(totalForward + 1);
-
     if (totalForward < (NB_STEPS + 1)) {
-        std::cout << "【ERROR】ZMP_Ref plan forward size not enough!" << std::endl;
-        return;
+        std::cout << "【ERROR】ZMP_Ref plan forward size not enough!" << totalForward << std::endl;
+        nbFinalSupportSteps_ += NB_STEPS + 1 - totalForward;
+        totalForward = NB_STEPS + 1;
     }
+
+    totalIndex.resize(totalForward + 1);
 
     for (int i = 0; i <= totalForward; i ++) {
         if (i < nbInitSupportSteps_) {
@@ -284,13 +285,13 @@ bool ModelPredictiveControl::checkContact()
         footPlan_.push_back(footPlan_[footPlan_.size()-1]);
     }
     if(timeCircle_ >= footPlan_[0].remainSupportTime_) {
-        // if(footPlan_[0].supportState_ == ContactState::SingleSupport) {
-        //     footPlan_[0].supportState_ = ContactState::DoubleSupport;
-        //     footPlan_[0].remainSupportTime_ = DoubleSupportTime;
-        // }
-        // else {
+        if(footPlan_[0].supportState_ == ContactState::SingleSupport) {
+            footPlan_[0].supportState_ = ContactState::DoubleSupport;
+            footPlan_[0].remainSupportTime_ = DoubleSupportTime;
+        }
+        else {
             footPlan_.pop_front();
-        // }
+        }
         return true;
     }
     return false;
@@ -338,7 +339,7 @@ void ModelPredictiveControl::buildAndSolve()
 
     Eigen::VectorXd QPSolution = solver_.getSolution();
     Eigen::Map<Eigen::MatrixXd> states(QPSolution.block<STATE_SIZE * (NB_STEPS + 1), 1>(0, 0).data(), STATE_SIZE, NB_STEPS + 1);
-    std::cout << "preview states: \n" << states.transpose() << std::endl;
+    // std::cout << "preview states: \n" << states.transpose() << std::endl;
     stateTraj_ = states;
     calibrate(stateTraj_);
     timeCircle_ ++;

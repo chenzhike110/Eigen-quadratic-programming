@@ -10,9 +10,9 @@ namespace lipm_walking{
 
 constexpr double WALK_HEIGHT = 0.5;
 constexpr double GRAVITY = 9.8; /** Gravity **/
-constexpr double SAMPLING_PERIOD = 0.01; /** Duration of delta T **/
+constexpr double SAMPLING_PERIOD = 0.02; /** Duration of delta T **/
 constexpr unsigned INPUT_SIZE = 2; /** jeck_x, jeck_y **/
-constexpr unsigned NB_STEPS = 100; /** window size for model predictive control preview **/
+constexpr unsigned NB_STEPS = 75; /** window size for model predictive control preview **/
 constexpr unsigned STATE_SIZE = 6; /** CoM positions, velocities and accelerations **/
 
 class ModelPredictiveControl
