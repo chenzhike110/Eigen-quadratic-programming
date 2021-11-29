@@ -39,75 +39,109 @@ ModelPredictiveControl::ModelPredictiveControl()
         0, -zeta;
     
     initState_ = Eigen::VectorXd::Zero(STATE_SIZE);
-    updateFixedConstraint();
     updateHessian();
-}
+    updateFixedConstraint();
 
-void ModelPredictiveControl::phaseDurations(double initSupportDuration,
-                                            double doubleSupportDuration,
-                                            double targetSupportDuration,
-                                            double targetDoubleDuration)
-{
-    // initSupport -> doubleSupport -> targetSupport -> nextDoubleSupport 
-    const double T = SAMPLING_PERIOD;
-    unsigned nbStepSoFar = 0;
-    nbInitSupportSteps_ = std::min(static_cast<unsigned>(std::round(initSupportDuration / T)), NB_STEPS - nbStepSoFar);
-    nbStepSoFar += nbInitSupportSteps_;
-    nbDoubleSupportSteps_ = std::min(static_cast<unsigned>(std::round(doubleSupportDuration / T)), NB_STEPS - nbStepSoFar);
-    nbStepSoFar += nbDoubleSupportSteps_;
-    nbTargetSupportSteps_ = std::min(static_cast<unsigned>(std::round(targetSupportDuration / T)), NB_STEPS - nbStepSoFar);
-    nbStepSoFar += nbTargetSupportSteps_;
-    nbNextDoubleSupportSteps_ = std::min(static_cast<unsigned>(std::round(targetDoubleDuration / T)), NB_STEPS - nbStepSoFar);
-    nbStepSoFar += nbNextDoubleSupportSteps_;
-    nbFinalSupportSteps_ = NB_STEPS - nbStepSoFar;
+    Contact init;
+    init.supportState_ = ContactState::DoubleSupport;
+    init.remainSupportTime_ = 0;
+    footPlan_.push_back(init);
 
-    for (long i = 0; i <= NB_STEPS; i++) {
-        if(i < nbInitSupportSteps_ || (i > 0 && i==nbInitSupportSteps_)) {
-            indexToHrep_[i] = 0; // single support on first contact
-        }
-        else if(i - nbInitSupportSteps_ < nbDoubleSupportSteps_) {
-            indexToHrep_[i] = 1; // double support between first contact and second contact
-        }
-        else if(i - nbInitSupportSteps_ - nbDoubleSupportSteps_ < nbTargetSupportSteps_){
-            indexToHrep_[i] = 2; // single support on second contact
-        }
-        else if(i - nbInitSupportSteps_ - nbDoubleSupportSteps_ - nbTargetSupportSteps_ < nbNextDoubleSupportSteps_) {
-            indexToHrep_[i] = 3; // double support between second and third contact
-        }
-        else {
-            indexToHrep_[i] = 4;
-        }
+    solver_.settings()->setWarmStart(true);
+    // solver_.settings()->setVerbosity(false);
+
+    if(!solver_.initSolver())
+    {
+        std::cout << "solver init error" << std::endl;
     }
 }
 
-void ModelPredictiveControl::updateContact(Contact init, Contact middle, Contact final)
+void ModelPredictiveControl::updateMeasurement(Eigen::VectorXd & estimate)
 {
-    initContact_ = init;
-    nextContact_ = middle;
-    targetContact_ = final;
+    for(int i = 0; i < estimate.size() && i < initState_.size(); i++)
+    {
+        initState_[i] = estimate[i];
+    }
+}
+
+void ModelPredictiveControl::addContact(Contact & target)
+{
+    footPlan_.push_back(target);
 }
 
 void ModelPredictiveControl::computeZMP_ref()
-{
-    zmpRef_.setZero();
-    Eigen::Vector2d p_0 = initContact_.position().head<2>();
-    Eigen::Vector2d p_2 = targetContact_.position().head<2>();
-    Eigen::Vector2d p_1 = nextContact_.position().head<2>();
+{   
+    totalRef.resize(2 * (totalForward + 1));
+    totalRef.setZero();
 
-    for(long i = 0; i <= NB_STEPS; i++) {
-        if( indexToHrep_[i] <= 1) {
+    Eigen::Vector2d p_0 = footPlan_[0].position().head<2>();
+    Eigen::Vector2d p_1 = footPlan_[1].position().head<2>();
+    Eigen::Vector2d p_2 = footPlan_[2].position().head<2>();
+
+    for(long i = 0; i <= totalForward; i++) {
+        if( totalIndex[i] <= 1) {
             long j = i - nbInitSupportSteps_;
             double x = (nbDoubleSupportSteps_ > 0) ? static_cast<double>(j) / static_cast<double>(nbDoubleSupportSteps_) : 0;
             x = clamp(x, 0., 1.);
-            zmpRef_.segment<2>(2 * i) = (1. - x) * p_0 + x * p_1;
+            totalRef.segment<2>(2 * i) = (1. - x) * p_0 + x * p_1;
         }
         else {
             long j = i - nbInitSupportSteps_ - nbDoubleSupportSteps_ - nbTargetSupportSteps_;
             double x = (nbNextDoubleSupportSteps_ > 0) ? static_cast<double>(j) / static_cast<double>(nbNextDoubleSupportSteps_) : 0;
             x = clamp(x, 0., 1.);
-            zmpRef_.segment<2>(2 * i) = (1. - x) * p_1 + x * p_2;
+            totalRef.segment<2>(2 * i) = (1. - x) * p_1 + x * p_2;
         }
     }
+}
+
+void ModelPredictiveControl::generateplan()
+{
+    totalForward = 0;
+    int tmpIndex = 0;
+
+    nbInitSupportSteps_ = footPlan_[tmpIndex].supportState_ == ContactState::SingleSupport ? footPlan_[tmpIndex++].remainSupportTime_ : 0;
+    totalForward += nbInitSupportSteps_;
+    nbDoubleSupportSteps_ = footPlan_[tmpIndex].supportState_ == ContactState::DoubleSupport ? footPlan_[tmpIndex++].remainSupportTime_ : DoubleSupportTime;
+    totalForward += nbDoubleSupportSteps_;
+    nbTargetSupportSteps_ = footPlan_[tmpIndex].supportState_ == ContactState::SingleSupport ? footPlan_[tmpIndex++].remainSupportTime_ : 0;
+    totalForward += nbTargetSupportSteps_;
+    nbNextDoubleSupportSteps_ = footPlan_[tmpIndex].supportState_ == ContactState::DoubleSupport ? footPlan_[tmpIndex++].remainSupportTime_ : DoubleSupportTime;
+    totalForward += nbNextDoubleSupportSteps_;
+    nbFinalSupportSteps_ = footPlan_[tmpIndex].supportState_ == ContactState::SingleSupport ? footPlan_[tmpIndex++].remainSupportTime_ : 0;
+    totalForward += nbFinalSupportSteps_;
+
+    totalIndex.resize(totalForward + 1);
+
+    if (totalForward < (NB_STEPS + 1)) {
+        std::cout << "【ERROR】ZMP_Ref plan forward size not enough!" << std::endl;
+        return;
+    }
+
+    for (int i = 0; i <= totalForward; i ++) {
+        if (i < nbInitSupportSteps_) {
+            totalIndex[i] = 0;
+        }
+        else if (i < nbInitSupportSteps_ + nbDoubleSupportSteps_)
+        {
+            totalIndex[i] = 1;
+        }
+        else if (i < nbInitSupportSteps_ + nbDoubleSupportSteps_ + nbTargetSupportSteps_)
+        {
+            totalIndex[i] = 2;
+        }
+        else if (i < nbInitSupportSteps_ + nbDoubleSupportSteps_ + nbTargetSupportSteps_ + nbNextDoubleSupportSteps_)
+        {
+            totalIndex[i] = 3;
+        }
+        else {
+            totalIndex[i] = 4;
+        }
+    }
+    std::cout << "generate time plan: " << nbInitSupportSteps_ << " " << nbDoubleSupportSteps_
+              << " " << nbTargetSupportSteps_ << " " << nbNextDoubleSupportSteps_ << " " << nbFinalSupportSteps_ << std::endl;
+
+    timeCircle_ = 0;
+    computeZMP_ref();
 }
 
 void ModelPredictiveControl::updateEstimation(Eigen::VectorXd & xest)
@@ -120,6 +154,7 @@ void ModelPredictiveControl::updateHessian()
     Eigen::MatrixXd hessianDense;
     constexpr int variableNum = STATE_SIZE * (NB_STEPS + 1) + INPUT_SIZE * NB_STEPS;
     hessianDense.resize(variableNum, variableNum);
+    gradient_.resize(variableNum, 1);
     hessianDense.setZero();
     Eigen::Matrix<double, STATE_SIZE, STATE_SIZE> Q;
     Eigen::Matrix<double, INPUT_SIZE, INPUT_SIZE> R;
@@ -148,12 +183,13 @@ void ModelPredictiveControl::updateHessian()
         std::cout << hessian_.cols() << " " << hessian_.rows() << std::endl;
         std::cout << "hessian error" << std::endl;
     }
+    if(!solver_.data()->setGradient(gradient_)) {
+        std::cout << "gradient error" << std::endl;
+    }
 }
 
 void ModelPredictiveControl::updateGradient()
-{
-    constexpr int variableNum = STATE_SIZE * (NB_STEPS + 1) + INPUT_SIZE * NB_STEPS;
-    gradient_.resize(variableNum, 1);
+{ 
     gradient_.setZero();
     Eigen::Matrix<double, STATE_SIZE, 2> Q_;
     Eigen::Matrix2d zmpCost = Eigen::Matrix2d::Identity() * zmpWeight;
@@ -180,15 +216,23 @@ void ModelPredictiveControl::updateFixedConstraint()
 
     constraintDense.block<STATE_SIZE * (NB_STEPS + 1), STATE_SIZE * (NB_STEPS + 1)>(0, 0).setIdentity();
     constraintDense = -constraintDense;
-    lowerBound_.segment<STATE_SIZE>(0) = -initState_;
-    upperBound_.segment<STATE_SIZE>(0) = -initState_; 
 
     for(int i = 1; i <= NB_STEPS; i++){
         constraintDense.block<STATE_SIZE, STATE_SIZE>(STATE_SIZE * i, STATE_SIZE*(i - 1)) = A_;
         constraintDense.block<STATE_SIZE, INPUT_SIZE>(STATE_SIZE * i, STATE_SIZE * (NB_STEPS + 1) + INPUT_SIZE*(i - 1)) = B_;
     }
 
+    constraint_ = constraintDense.sparseView();
     solver_.data()->setNumberOfConstraints(constraintNum);
+    if (!solver_.data()->setLinearConstraintsMatrix(constraint_)) {
+        std::cout << "set constraint error" << std::endl;
+    }
+    if (!solver_.data()->setLowerBound(lowerBound_)) {
+        std::cout << "set low bound error" << std::endl;
+    }
+    if (!solver_.data()->setUpperBound(upperBound_)) {
+        std::cout << "set up bound error" << std::endl;
+    }
 }
 
 void ModelPredictiveControl::updateBound()
@@ -196,9 +240,12 @@ void ModelPredictiveControl::updateBound()
     int constraintIndex = STATE_SIZE * (NB_STEPS + 1);
     Eigen::VectorXd initLow, initUp, nextLow, nextUp, targetLow, targetUp;
     Eigen::MatrixXd initConstraint, nextConstraint, targetConstraint;
-    initContact_.getConstraint(initConstraint, initLow, initUp);
-    nextContact_.getConstraint(nextConstraint, nextLow, nextUp);
-    targetContact_.getConstraint(targetConstraint, targetLow, targetUp);
+    footPlan_[0].getConstraint(initConstraint, initLow, initUp);
+    footPlan_[1].getConstraint(nextConstraint, nextLow, nextUp);
+    footPlan_[2].getConstraint(targetConstraint, targetLow, targetUp);
+
+    lowerBound_.segment<STATE_SIZE>(0) = -initState_;
+    upperBound_.segment<STATE_SIZE>(0) = -initState_; 
 
     constraintDense.block<NB_STEPS * 2, STATE_SIZE * (NB_STEPS + 1) + INPUT_SIZE * NB_STEPS>(constraintIndex, 0).setZero();
     lowerBound_.segment<NB_STEPS * 2>(constraintIndex).setZero();
@@ -231,35 +278,54 @@ void ModelPredictiveControl::updateBound()
     }
 }
 
+bool ModelPredictiveControl::checkContact()
+{
+    if(footPlan_.size() < 3) {
+        footPlan_.push_back(footPlan_[footPlan_.size()-1]);
+    }
+    if(timeCircle_ >= footPlan_[0].remainSupportTime_) {
+        // if(footPlan_[0].supportState_ == ContactState::SingleSupport) {
+        //     footPlan_[0].supportState_ = ContactState::DoubleSupport;
+        //     footPlan_[0].remainSupportTime_ = DoubleSupportTime;
+        // }
+        // else {
+            footPlan_.pop_front();
+        // }
+        return true;
+    }
+    return false;
+}
+
 void ModelPredictiveControl::buildAndSolve()
 {
-    computeZMP_ref();
+    if (checkContact()) {
+        generateplan();
+    }
+
+    zmpRef_.setZero();
+    zmpRef_ = totalRef.segment<2 * (NB_STEPS + 1)>(2 * timeCircle_);
+    for (long i = 0; i <= NB_STEPS; i++) {
+        indexToHrep_[i] = totalIndex[i + timeCircle_];
+    }
+
     updateGradient();
     updateBound();
 
     constraint_ = constraintDense.sparseView();
     
-    if(!solver_.data()->setGradient(gradient_))
+    if(!solver_.updateGradient(gradient_))
     {
         std::cout << "gradient error" << std::endl;
     }
-    if(!solver_.data()->setLinearConstraintsMatrix(constraint_))
+    if(!solver_.updateLinearConstraintsMatrix(constraint_))
     {
         std::cout << "constaintsSparse error" << std::endl;
     }
-    if(!solver_.data()->setLowerBound(lowerBound_))
+    if(!solver_.updateBounds(lowerBound_, upperBound_))
     {
-        std::cout << "lowerBound error" << std::endl;
-    }
-    if(!solver_.data()->setUpperBound(upperBound_))
-    {
-        std::cout << "upperBound error" << std::endl;
+        std::cout << "updateBound error" << std::endl;
     }
 
-    if(!solver_.initSolver())
-    {
-        std::cout << "solver init error" << std::endl;
-    }
     if(!solver_.solve())
     {
         std::cout << "solver solve error" << std::endl;
@@ -273,8 +339,9 @@ void ModelPredictiveControl::buildAndSolve()
     Eigen::VectorXd QPSolution = solver_.getSolution();
     Eigen::Map<Eigen::MatrixXd> states(QPSolution.block<STATE_SIZE * (NB_STEPS + 1), 1>(0, 0).data(), STATE_SIZE, NB_STEPS + 1);
     std::cout << "preview states: \n" << states.transpose() << std::endl;
-    Eigen::MatrixXd statePlan = states;
-    calibrate(statePlan);
+    stateTraj_ = states;
+    calibrate(stateTraj_);
+    timeCircle_ ++;
 }
 
 void ModelPredictiveControl::calibrate(Eigen::MatrixXd states)
@@ -283,16 +350,13 @@ void ModelPredictiveControl::calibrate(Eigen::MatrixXd states)
     for(int i = 0; i < states.cols(); i++)
     {
         zmp = stateTozmp_.transpose() * states.col(i);
-        std::cout << zmp.transpose() << " | ";
-        std::cout << zmpRef_.segment<2>(i * 2).transpose() << std::endl; 
-        if(indexToHrep_[i] == 0) {
-            std::cout << "zmp in rectangle: " << initContact_.containPoint(zmp) << std::endl;
-        }
-        else if(indexToHrep_[i] == 2) {
-            std::cout << "zmp in rectangle: " << nextContact_.containPoint(zmp) << std::endl;
-        }
-        else if(indexToHrep_[i] == 4) {
-            std::cout << "zmp in rectangle: " << targetContact_.containPoint(zmp) << std::endl;
+        // std::cout << zmp.transpose() << " | ";
+        // std::cout << zmpRef_.segment<2>(i * 2).transpose() << std::endl; 
+        if(indexToHrep_[i] % 2 == 0) {
+            if(!footPlan_[int(indexToHrep_[i]/2)].containPoint(zmp)) {
+                std::cout << "zmp out!" << std::endl;
+                break;
+            }
         }
     }
 }

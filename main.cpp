@@ -1,7 +1,7 @@
 #include <OsqpEigen/OsqpEigen.h>
 #include <Eigen/Dense>
 #include <iostream>
-
+#include <vector>
 #include <locomotion/ModelPredictiveControl.h>
 
 using namespace lipm_walking;
@@ -134,14 +134,25 @@ bool SimpleSystem()
 void Locomotion()
 {
     Contact init(sva::PTransformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero()));
-    init.halfWidth = 0.24;
     init.supportState_ = ContactState::DoubleSupport; 
+    init.remainSupportTime_ = DoubleSupportTime;
     Contact middle(sva::PTransformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d(0, 0.2, 0)));
     Contact Target(sva::PTransformd(Eigen::Matrix3d::Identity(), Eigen::Vector3d(0, -0.2, 0)));
+
+    Contact end = init;
+    end.remainSupportTime_ = 100;
+    std::vector<Contact> targetPlan = {init, middle, Target, middle, end};
+
     ModelPredictiveControl mpc_;
-    mpc_.updateContact(init, middle, Target);
-    mpc_.phaseDurations(0, 0.4, 0.8, 0.4);
-    mpc_.buildAndSolve();
+    mpc_.addContactSequence<std::vector<Contact>>(targetPlan);
+    // mpc_.phaseDurations(0, 0.4, 0.8, 0.4);
+    for (long i = 0; i < 50; i++) {
+        mpc_.buildAndSolve();
+        Eigen::VectorXd nextState = mpc_.stateTraj_.col(1);
+        mpc_.updateEstimation(nextState);
+        std::cout << "Traj " << i << " : " <<  nextState.transpose() << std::endl;
+    }
+    
 }
 
 int main(int argc, char** argv)
